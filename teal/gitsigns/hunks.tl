@@ -43,7 +43,11 @@ function M.create_hunk(start_a: integer, count_a: integer, start_b: integer, cou
   local hunk: Hunk = {
     start   = added.start,
     removed = removed,
-    added   = added
+    added   = added,
+    head = ('@@ -%d%s +%d%s @@'):format(
+      start_a, count_a > 0 and ',' .. count_a or '',
+      start_b, count_b > 0 and ',' .. count_b or ''
+    )
   }
 
   if added.count == 0 then
@@ -64,6 +68,63 @@ function M.create_hunk(start_a: integer, count_a: integer, start_b: integer, cou
   end
 
   return hunk
+end
+
+function M.create_partial_hunk(hunks: {Hunk}, top: integer, bot: integer): Hunk
+  local pretop, precount = top, bot - top + 1
+  for _, h in ipairs(hunks) do
+    local added_in_hunk = h.added.count - h.removed.count
+
+    local added_in_range = 0
+    if h.start >= top and h.vend <= bot then
+      -- Range contains hunk
+      added_in_range = added_in_hunk
+    else
+      local added_above_bot = math.max(0, bot + 1 - (h.start + h.removed.count))
+      local added_above_top = math.max(0, top - (h.start + h.removed.count))
+
+      if h.start >= top and h.start <= bot then
+        -- Range top intersects hunk
+        added_in_range = added_above_bot
+      elseif h.vend >= top and h.vend <= bot then
+        -- Range bottom intersects hunk
+        added_in_range = added_in_hunk - added_above_top
+        pretop = pretop - added_above_top
+      elseif h.start <= top and h.vend >= bot then
+        -- Range within hunk
+        added_in_range = added_above_bot - added_above_top
+        pretop = pretop - added_above_top
+      end
+
+      if top > h.vend then
+        pretop = pretop - added_in_hunk
+      end
+    end
+
+    precount = precount - added_in_range
+  end
+
+  if precount == 0 then
+    pretop = pretop - 1
+  end
+
+  return M.create_hunk(pretop, precount, top, bot - top + 1)
+end
+
+---Find all hunks in a given range for a given buffer.
+function M.get_range_hunks(hunks: {Hunk}, top: integer, bot: integer): {Hunk}
+  local ret: {Hunk} = {}
+  for _, hunk in ipairs(hunks) do
+    if top == 1 and hunk.start == 0 and hunk.vend == 0 then
+      return {hunk}
+    end
+
+    if (bot >= hunk.start and top <= hunk.vend) then
+      ret[#ret+1] = hunk
+    end
+  end
+
+  return ret
 end
 
 function M.patch_lines(hunk: Hunk): {string}
